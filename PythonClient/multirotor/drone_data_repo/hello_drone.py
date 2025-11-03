@@ -6,6 +6,7 @@ import os
 import tempfile
 import pprint
 import cv2
+import utils
 
 # connect to the AirSim simulator
 client = airsim.MultirotorClient()
@@ -38,11 +39,17 @@ client.armDisarm(True)
 client.takeoffAsync().join()
 
 state = client.getMultirotorState()
-print("state: %s" % pprint.pformat(state))
+# print("state: %s" % pprint.pformat(state))
 
-airsim.wait_key('Press any key to move vehicle to (20, 30, -2580, 5) at 5 m/s')
-# client.moveToPositionAsync(-100, 100, -50, 5).join()
-client.moveToPositionAsync(20, 30, -2580, 5).join()
+print("GPS Location Data:", utils.get_gps_location_data(client))
+print("Local Position Data:", utils.get_local_position_data(client))
+
+airsim.wait_key('Press any key to move vehicle to (20, 30, -50, 5) at 5 m/s')
+
+# client.moveToPositionAsync(-100, 100, -50, 3).join()
+client.moveToPositionAsync(20, 30, -50, 3).join()
+print("GPS Location Data:", utils.get_gps_location_data(client))
+print("Local Position Data:", utils.get_local_position_data(client))
 
 client.hoverAsync().join()
 
@@ -50,7 +57,8 @@ state = client.getMultirotorState()
 print("state: %s" % pprint.pformat(state))
 
 airsim.wait_key('Press any key to take images')
-# get camera images from the car
+# The following line is where the images are **taken** from the simulator.
+# It requests four images of different types from different cameras.
 responses = client.simGetImages([
     airsim.ImageRequest("0", airsim.ImageType.DepthVis),  #depth visualization image
     airsim.ImageRequest("1", airsim.ImageType.DepthPerspective, True), #depth in perspective projection
@@ -66,10 +74,12 @@ except OSError:
     if not os.path.isdir(tmp_dir):
         raise
 
+# The following loop is where the captured images are **saved** to files.
 for idx, response in enumerate(responses):
 
     filename = os.path.join(tmp_dir, str(idx))
 
+    # It checks the image format and uses the appropriate function to write the file.
     if response.pixels_as_float:
         print("Type %d, size %d" % (response.image_type, len(response.image_data_float)))
         airsim.write_pfm(os.path.normpath(filename + '.pfm'), airsim.get_pfm_array(response))
