@@ -173,7 +173,7 @@ def take_images(client: airsim.MultirotorClient, camera_name):
             snapshot_data.imagePath = os.path.normpath(filename + ".png")
             snapshot_data.image_data_uint8 = response.image_data_uint8
             snapshot_data_list.append(snapshot_data)
-            
+
         image_index += 1
 
     return snapshot_data_list
@@ -227,18 +227,22 @@ def _quat_mul(q1: airsim.Quaternionr, q2: airsim.Quaternionr) -> airsim.Quaterni
     w1, x1, y1, z1 = q1.w_val, q1.x_val, q1.y_val, q1.z_val
     w2, x2, y2, z2 = q2.w_val, q2.x_val, q2.y_val, q2.z_val
     q = airsim.Quaternionr()
-    q.w_val = w1*w2 - x1*x2 - y1*y2 - z1*z2
-    q.x_val = w1*x2 + x1*w2 + y1*z2 - z1*y2
-    q.y_val = w1*y2 - x1*z2 + y1*w2 + z1*x2
-    q.z_val = w1*z2 + x1*y2 - y1*x2 + z1*w2
+    q.w_val = w1 * w2 - x1 * x2 - y1 * y2 - z1 * z2
+    q.x_val = w1 * x2 + x1 * w2 + y1 * z2 - z1 * y2
+    q.y_val = w1 * y2 - x1 * z2 + y1 * w2 + z1 * x2
+    q.z_val = w1 * z2 + x1 * y2 - y1 * x2 + z1 * w2
     return q
 
 
-def set_camera_pitch_relative(client: airsim.MultirotorClient, camera_name="0", delta_pitch_degree=0):
+def set_camera_pitch_relative(
+    client: airsim.MultirotorClient, camera_name="0", delta_pitch_degree=0
+):
     """Rotate camera around its local X-axis by delta_pitch_degree."""
     info = client.simGetCameraInfo(camera_name)
     q_cur = info.pose.orientation
-    q_delta = airsim.to_quaternion(math.radians(delta_pitch_degree), 0, 0)  # local X (pitch)
+    q_delta = airsim.to_quaternion(
+        math.radians(delta_pitch_degree), 0, 0
+    )  # local X (pitch)
     q_new = _quat_mul(q_cur, q_delta)  # apply in camera local frame
     client.simSetCameraPose(camera_name, airsim.Pose(info.pose.position, q_new))
     return client.simGetCameraInfo(camera_name)
@@ -274,7 +278,32 @@ def get_cam_info(client: airsim.MultirotorClient, camera_name="0"):
     # gimbal_data = quaternion_to_euler(cam_info.pose.orientation)
     return cam_info
 
-def is_ok_gimbal(pitch, max_pitch, roll, max_roll):
+
+def is_ok_gimbal(pitch, max_pitch, min_pitch):
     # roll can be near 0° or near 180° depending on AirSim gimbal orientation
-    roll_err = min(abs(roll), abs(180 - abs(roll)))
-    return abs(pitch) < max_pitch and roll_err < max_roll
+    return abs(pitch) <= max_pitch and abs(pitch) >= min_pitch
+
+
+def update_scatter_data(scatter_objs, ax, fig, datasets):
+    """
+    scatter_objs: list of scatter plot objects
+    datasets: list of (x_list, y_list) tuples, same order as scatter_objs
+    """
+    combined_pts = []
+
+    for scatter, (x_data, y_data) in zip(scatter_objs, datasets):
+        if len(x_data) and len(y_data):
+            pts = np.column_stack((x_data, y_data))
+            scatter.set_offsets(pts)
+            combined_pts.append(pts)
+        else:
+            scatter.set_offsets(np.empty((0, 2)))
+
+    # relim() ignores scatter; update limits from points explicitly
+    if combined_pts:
+        all_pts = np.vstack(combined_pts)
+        ax.update_datalim(all_pts)
+        ax.autoscale_view()
+
+    fig.canvas.draw_idle()
+    fig.canvas.flush_events()

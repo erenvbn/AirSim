@@ -1,0 +1,18 @@
+# Ignore generated drone images
+drone_data_repo/airsim_drone_images/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environment
+.venv/
+venv/
+ENV/
+
+# IDE / Editor files
+.vscode/
+.idea/
+*.swp
+*.swo

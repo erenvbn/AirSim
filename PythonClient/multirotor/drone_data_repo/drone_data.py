@@ -12,6 +12,9 @@ import survey_navigator
 import sys
 import argparse
 
+MAX_PITCH = 95  # degrees
+MIN_PITCH = 89.7  # degrees
+
 client = airsim.MultirotorClient()
 client.confirmConnection()
 client.enableApiControl(True)
@@ -21,6 +24,12 @@ altitude_data_list = []
 altitude_local_data_list = []
 gimbal_data_list = []
 timestamp_list = []
+
+corrupted_altitude_data_list = []
+corrupted_altitude_local_data_list = []
+corrupted_gimbal_data_list = []
+corrupted_timestamp_list = []
+
 snapshot_data_list = []
 
 # Setup live plot
@@ -118,7 +127,7 @@ if choice == "p":
 
     # AirSim uses NED coordinates so negative axis is up.
     # z of -15 is 15 meters above the original launch point.
-    z = -30
+    z = -15
     print("make sure we are hovering at {} meters...".format(-z))
     client.moveToZAsync(z, 1).join()
     # see https://github.com/Microsoft/AirSim/wiki/moveOnPath-demo
@@ -136,14 +145,13 @@ if choice == "p":
             airsim.Vector3r(0, -70, z),
             airsim.Vector3r(0, 0, z),
         ],
-        12,  # velocity
+        3,  # velocity
         500,  # timeout_sec
         airsim.DrivetrainType.ForwardOnly,
         airsim.YawMode(False, 0),
         20,  # lookahead
         1,  # adaptive_lookahead
     )
-    # .join()
 
 print("Movement command issued. Monitoring altitude...")
 
@@ -161,7 +169,24 @@ if not survey_mode:
     print("Gimbal set to -90 degrees pitch.")
     print("Camera Info:", rotated_cam_info)
 
+    scatter_blue = ax_altitude.scatter(
+        timestamp_list, altitude_local_data_list, color="blue", label="Normal Data"
+    )
+    
+    scatter_red = ax_altitude.scatter(
+        corrupted_timestamp_list,
+        corrupted_altitude_local_data_list,
+        color="red",
+        label="Corrupted Data",
+    )
+    scatter_objs = [scatter_blue, scatter_red]
+
     while flying:
+        elapsed_time = time.time() - start_time
+
+        # Always get the latest camera info here (top of loop)
+        rotated_cam_info = utils.get_cam_info(client, camera_name="0")
+        gimbal_euler = utils.quaternion_to_euler(rotated_cam_info.pose.orientation)
         multirotor_state = client.getMultirotorState()
         if (
             multirotor_state.landed_state == airsim.LandedState.Landed and i > 10
@@ -187,38 +212,69 @@ if not survey_mode:
             magnetic_field_covariance=airsim_magnetometer_data.magnetic_field_covariance,
         )
 
-        # Always get the latest camera info here
-        rotated_cam_info = utils.get_cam_info(client, camera_name="0")
-
         drone_data_moment = models.DroneData(
             gps_data=gps_Data,
-            gimbal_data=utils.quaternion_to_euler(rotated_cam_info.pose.orientation),
+            gimbal_data=gimbal_euler,  # reuse computed Euler
             snapshot_data_list=utils.take_images(client, camera_name="3"),
             magnetometer_data=magnetometer_data,
         )
 
         altitude_gps = drone_data_moment.gps_data.altitude
-        altitude_local = (
-            utils.get_local_position_data(client)[2] * -1
-        )  # Convert to positive altitude
-        elapsed_time = time.time() - start_time
 
-        # For Drawing Graphic
-        # altitude_data_list.append(altitude)
-        utils.add_altitude_local_data(
-            altitude_local_data_list, altitude_local, timestamp_list, elapsed_time
+        is_gimbal_ok = utils.is_ok_gimbal(
+            gimbal_euler.pitch,
+            MAX_PITCH,
+            MIN_PITCH,
         )
 
-        # Update line data instead of clearing the plot
-        utils.update_line_data(
-            line, ax_altitude, fig, timestamp_list, altitude_local_data_list
-        )
-        rotated_cam_info = utils.get_cam_info(client, camera_name="0")
-        print("Rotated Camera Info:", rotated_cam_info)
+        altitude_local = utils.get_local_position_data(client)[2] * -1  # make positive
 
-        print(f"Time: {elapsed_time:.2f}s, Altitude Local: {altitude_local:.2f}m")
-        print("----- Drone Data Count -----", len(drone_data_moment))
-        # pprint.pprint(drone_data_moment)
+        if not is_gimbal_ok:
+            print(
+                "Gimbal is NOT in safe position! (pitch=%.2f, roll=%.2f)"
+                % (gimbal_euler.pitch, gimbal_euler.roll)
+            )
+            utils.add_altitude_local_data(
+                corrupted_altitude_local_data_list,
+                altitude_local,
+                corrupted_timestamp_list,
+                elapsed_time,
+            )
+        else:
+            print(
+                "Gimbal is OK (pitch=%.2f, roll=%.2f)"
+                % (gimbal_euler.pitch, gimbal_euler.roll)
+            )
+            utils.add_altitude_local_data(
+                altitude_local_data_list,
+                altitude_local,
+                timestamp_list,
+                elapsed_time,
+            )
+
+        # utils.update_line_data(
+        #     line, ax_altitude, fig, timestamp_list, altitude_local_data_list
+        # )
+
+        datasets = [
+            (timestamp_list, altitude_local_data_list),
+            (corrupted_timestamp_list, corrupted_altitude_local_data_list),
+        ]
+        utils.update_scatter_data(
+            scatter_objs, ax=ax_altitude, fig=fig, datasets=datasets
+        )
+        
+        print("Scatter Blue Length:", len(altitude_local_data_list))
+        print("Scatter Timestamp Length:", len(timestamp_list))
+        
+        print("Scatter Red Length:", len(corrupted_altitude_local_data_list))
+        print("Scatter Corrupted Timestamp Length:", len(corrupted_timestamp_list))
+        
+
+        print(
+            f"Time: {elapsed_time:.2f}s, Altitude Local: {altitude_local:.2f}m, "
+            f"Gimbal pitch: {gimbal_euler.pitch:.2f}, roll: {gimbal_euler.roll:.2f}"
+        )
 
         # Stop after timeout
         if elapsed_time > 500:  # Increased timeout to allow for movement
